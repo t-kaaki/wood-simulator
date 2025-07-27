@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>木材棚シミュレーター</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/TransformControls.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    /* 基本スタイル */
+    body { margin: 0; overflow: hidden; font-family: 'Hiragino Kaku Gothic ProN', 'メイリオ', sans-serif; background-color: #f0f4f8; }
+    .control-panel { background-color: #ffffff; border-radius: 0.5rem; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
+    .btn { transition: all 0.2s; }
+    .btn:hover { transform: translateY(-1px); }
+    .btn-outline { border: 1px solid #2d3748; color: #2d3748; background-color: white; }
+    .btn-outline:hover { background-color: #f7fafc; }
+    .toggle-btn.active { background-color: #4f46e5; color: white; }
+    
+    /* 3Dキャンバス */
+    #canvas-container { position: relative; width: 100%; background-color: #e2e8f0; border-radius: 0.5rem; overflow: hidden; }
+
+    /* モーダル */
+    .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(0, 0, 0, 0.5); display: flex; justify-content: center; align-items: center; z-index: 50; visibility: hidden; opacity: 0; transition: all 0.3s; }
+    .modal-overlay.active { visibility: visible; opacity: 1; }
+    .modal-content, .full-modal-content { background-color: white; padding: 2rem; border-radius: 0.5rem; width: 90%; max-width: 500px; transform: translateY(-20px); transition: all 0.3s; }
+    .full-modal-content { max-width: 1200px; height: 90%; overflow-y: auto; }
+    .modal-overlay.active .modal-content, .modal-overlay.active .full-modal-content { transform: translateY(0); }
+
+    /* 材料取り図 */
+    #wood-diagrams-container { position: relative; }
+    .wood-diagram { position: relative; background-color: #f3e5ab; border: 1px solid #d2b48c; border-radius: 4px; margin-bottom: 1.5rem; }
+    .wood-diagram-part { 
+      position: absolute; 
+      background-color: rgba(210, 180, 140, 0.7); 
+      border: 1px dashed #8b4513; 
+      box-sizing: border-box; 
+      display: flex; 
+      flex-direction: row;
+      align-items: center; 
+      justify-content: center; 
+      gap: 0.5rem;
+      font-size: 0.75rem; 
+      color: #333; 
+      overflow: hidden; 
+      white-space: nowrap; 
+      cursor: pointer;
+      text-shadow: 0 0 3px white, 0 0 3px white, 0 0 3px white, 0 0 3px white;
+    }
+    .part-initial { font-size: 3em; font-weight: bold; line-height: 1; }
+    .part-dimensions {
+      display: flex;
+      align-items: center;
+      gap: 0.2em;
+      font-size: 3em;
+      line-height: 1;
+    }
+    .wood-diagram-part.vertical-layout {
+      flex-direction: column;
+      gap: 0.2rem;
+      justify-content: center;
+    }
+    .wood-diagram-part.vertical-layout .part-dimensions {
+      flex-direction: column;
+      gap: 0;
+      line-height: 0.8;
+    }
+    .wood-diagram-part:hover { background-color: rgba(210, 180, 140, 0.9); }
+    .wood-diagram-part.selected { background-color: rgba(59, 130, 246, 0.5); border: 2px solid #2563eb; }
+    .waste-part {
+      background-image: repeating-linear-gradient(45deg, rgba(139, 69, 19, 0.4), rgba(139, 69, 19, 0.4) 10px, transparent 10px, transparent 20px);
+      background-color: rgba(210, 180, 140, 0.5);
+      border-style: solid;
+    }
+    
+    .cut-line { position: absolute; background-color: rgba(220, 38, 38, 0.4); cursor: pointer; transition: all 0.2s; z-index: 10; border-radius: 2px; box-shadow: 0 0 5px rgba(0,0,0,0.3); }
+    .cut-line:hover { background-color: rgba(220, 38, 38, 0.8); transform: scale(1.6); }
+    .cut-line.selected { background-color: rgba(37, 99, 235, 1); transform: scale(1.6); box-shadow: 0 0 10px rgba(37, 99, 235, 0.8); }
+
+    /* ★修正: UIボタンのコンテナとボタンデザイン */
+    #top-right-controls { position: fixed; top: 0.5rem; right: 0.5rem; z-index: 1000; display: flex; align-items: center; gap: 0.5rem; }
+    #font-size-controls { display: flex; gap: 0.5rem; }
+    #font-size-controls button { width: 2rem; height: 2rem; border-radius: 9999px; background-color: rgba(99, 102, 241, 0.8); color: white; font-weight: bold; font-size: 1.25rem; line-height: 1; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: background-color 0.2s; }
+    #font-size-controls button:hover { background-color: rgba(79, 70, 229, 1); }
+    #export-drawing-button { height: 2rem; padding: 0 1rem; margin-right: 1rem; font-size: 0.875rem; border-radius: 0.375rem; }
+
+    /* 右パネルのスクロール対応 */
+    #right-panel-wrapper { height: 100%; overflow-y: auto; }
+    .measurement-label { position: absolute; background-color: rgba(0, 0, 0, 0.7); color: white; padding: 2px 6px; border-radius: 4px; font-size: 12px; pointer-events: none; transform: translateX(-50%) translateY(-50%); white-space: nowrap; transition: top 0.1s; }
+
+    #loading-overlay { z-index: 100; }
+    .loader { border: 8px solid #f3f3f3; border-radius: 50%; border-top: 8px solid #4f46e5; width: 60px; height: 60px; animation: spin 1s linear infinite; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    
+    /* ★追加: スライダーの向きを反転させるスタイル */
+    .rtl {
+      direction: rtl;
+    }
+  </style>
+</head>
+<body class="flex flex-col h-screen">
+  <div id="top-right-controls">
+    <button id="export-drawing-button" class="btn bg-indigo-600 hover:bg-indigo-700 text-white" title="図面を出力する">図面出力</button>
+    <div id="font-size-controls">
+      <button id="font-size-decrease" title="UIを小さくする">-</button>
+      <button id="font-size-increase" title="UIを大きくする">+</button>
+    </div>
+  </div>
+
+  <!-- ヘッダー -->
+  <header class="container mx-auto px-4 py-2 flex items-center relative">
+    <div class="flex items-center gap-3">
+      <input type="file" id="load-input" class="hidden" accept=".json">
+      <button id="load-button" class="btn btn-outline px-4 py-1 rounded-md text-sm">読み込み</button>
+      <button id="save-button" class="btn btn-outline px-4 py-1 rounded-md text-sm">保存</button>
+      <button id="show-help" class="btn btn-outline px-4 py-1 rounded-md text-sm">操作方法</button>
+      <button id="show-usage-guide" class="btn btn-outline px-4 py-1 rounded-md text-sm">使い方</button>
+      <button id="reset-all" class="btn btn-outline px-4 py-1 rounded-md text-sm">リセット</button>
+    </div>
+    <h1 class="text-2xl font-bold text-indigo-800 absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">木材棚シミュレーター</h1>
+  </header>
+
+  <!-- サブ操作パネル -->
+  <div class="container mx-auto px-4 pb-2">
+    <div class="flex flex-wrap gap-3">
+      <button id="reset-view" class="btn bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-md text-sm">視点をリセット</button>
+      <button id="undo" class="btn bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-md text-sm">元に戻す</button>
+      <button id="show-wood-diagram" class="btn bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-md text-sm">材料取り図</button>
+      <button id="isometric-view" class="btn bg-cyan-600 hover:bg-cyan-700 text-white px-3 py-2 rounded-md text-sm">等角図風</button>
+      <button id="projection-view" class="btn bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded-md text-sm">製作図</button>
+    </div>
+  </div>
+
+  <!-- メインコンテンツ -->
+  <main class="container mx-auto px-4 pb-4 flex-grow">
+    <div class="grid grid-cols-1 lg:grid-cols-4 gap-6 h-full">
+      <div class="lg:col-span-3 flex flex-col h-full">
+        <div id="canvas-container" class="flex-grow">
+          <div id="backside-indicator" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[10rem] font-bold text-black/10 pointer-events-none hidden select-none z-10">
+            裏側
+          </div>
+        </div>
+      </div>
+      <div class="lg:col-span-1 h-full">
+        <div id="right-panel-wrapper" class="control-panel p-4">
+          <div id="right-panel">
+            <h2 class="text-xl font-bold mb-3 text-indigo-700">選択中の部品</h2>
+            <div id="selected-part-info" class="text-gray-700 mb-4">選択されていません</div>
+            <div id="transform-ui" class="hidden">
+              <h3 class="font-bold text-gray-700 mb-2 mt-4">位置調整 (1mm)</h3>
+              <div class="grid grid-cols-3 gap-2 mb-4">
+                <button data-axis="x" data-dir="1" class="btn bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded">X +</button>
+                <button data-axis="y" data-dir="1" class="btn bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded">Y +</button>
+                <button data-axis="z" data-dir="1" class="btn bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded">Z +</button>
+                <button data-axis="x" data-dir="-1" class="btn bg-red-200 hover:bg-red-300 text-red-800 px-2 py-1 rounded">X -</button>
+                <button data-axis="y" data-dir="-1" class="btn bg-green-200 hover:bg-green-300 text-green-800 px-2 py-1 rounded">Y -</button>
+                <button data-axis="z" data-dir="-1" class="btn bg-blue-200 hover:bg-blue-300 text-blue-800 px-2 py-1 rounded">Z -</button>
+              </div>
+              <h3 class="font-bold text-gray-700 mb-2">回転 (90度)</h3>
+              <div class="grid grid-cols-3 gap-2 mb-4">
+                <button data-rot="x" class="btn bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded">X軸</button>
+                <button data-rot="y" class="btn bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded">Y軸</button>
+                <button data-rot="z" class="btn bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded">Z軸</button>
+              </div>
+              <div id="name-setting-ui" class="space-y-2 mb-4">
+                <h3 class="font-bold text-gray-700">部品名設定</h3>
+                <div class="flex gap-2">
+                  <input type="text" id="part-name-input" list="part-name-presets" class="w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm" placeholder="プリセット選択または自由記述">
+                  <datalist id="part-name-presets">
+                    <option value="底板"></option><option value="側板"></option><option value="棚板"></option><option value="天板"></option><option value="仕切り板"></option><option value="背板"></option>
+                  </datalist>
+                  <button id="apply-part-name" class="btn bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md flex-shrink-0">適用</button>
+                </div>
+              </div>
+              <button id="hide-part" class="btn bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-md w-full mb-3">部品を非表示 (端材扱い)</button>
+              <button id="delete-selected-wood" class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md w-full mb-3">部品を削除</button>
+            </div>
+            <hr class="my-4">
+            <div id="add-wood-header" class="flex justify-between items-center cursor-pointer">
+              <h2 class="text-xl font-bold text-indigo-700">新しい板材を追加</h2>
+              <span id="add-wood-toggle-icon" class="text-indigo-700 font-bold text-xl">▶</span>
+            </div>
+            <div id="add-wood-form" class="space-y-3 mt-3 hidden">
+              <div>
+                <label for="new-wood-name" class="block text-sm font-medium text-gray-700">名前</label>
+                <input type="text" id="new-wood-name" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm" value="板材A" placeholder="例: 棚板, 側板">
+              </div>
+              <div>
+                <label for="new-wood-height" class="block text-sm font-medium text-gray-700">厚さ (mm)</label>
+                <input type="number" id="new-wood-height" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm" value="12" min="1">
+              </div>
+              <div>
+                <label for="new-wood-depth" class="block text-sm font-medium text-gray-700">幅 (mm)</label>
+                <input type="number" id="new-wood-depth" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm" value="150" min="10">
+              </div>
+              <div>
+                <label for="new-wood-width" class="block text-sm font-medium text-gray-700">長さ (mm)</label>
+                <input type="number" id="new-wood-width" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm" value="300" min="10">
+              </div>
+              <button id="add-new-wood" class="btn bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-md w-full">新しい板材を追加</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+  <div id="help-modal" class="modal-overlay"></div>
+  <div id="usage-guide-modal" class="modal-overlay"></div>
+  <div id="wood-diagram-modal" class="modal-overlay"></div>
+  <div id="projection-modal" class="modal-overlay"></div>
+
+  <div id="export-drawing-modal" class="modal-overlay">
+    <div class="modal-content">
+      <h3 class="text-xl font-bold mb-4 text-indigo-700">図面出力</h3>
+      <form id="export-form" class="space-y-4">
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label for="export-id" class="block text-sm font-medium text-gray-700">四桁番号</label>
+            <input type="text" id="export-id" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm" required>
+          </div>
+          <div>
+            <label for="export-name" class="block text-sm font-medium text-gray-700">名前</label>
+            <input type="text" id="export-name" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm" required>
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700">出力対象</label>
+          <div class="mt-2 grid grid-cols-3 gap-2 text-sm">
+            <label class="border rounded-md p-2 text-center cursor-pointer"><input type="radio" name="export-target" value="layout" class="mr-2" checked>全てを一つに</label>
+            <label class="border rounded-md p-2 text-center cursor-pointer"><input type="radio" name="export-target" value="isometric" class="mr-2">等角図風</label>
+            <label class="border rounded-md p-2 text-center cursor-pointer"><input type="radio" name="export-target" value="diagram" class="mr-2">材料取り図</label>
+            <label class="border rounded-md p-2 text-center cursor-pointer"><input type="radio" name="export-target" value="projection" class="mr-2">製作図</label>
+            <label class="border rounded-md p-2 text-center cursor-pointer col-span-2"><input type="radio" name="export-target" value="all" class="mr-2">全部（個別ファイル）</label>
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700">出力形式</label>
+          <div class="mt-2 flex gap-4">
+            <label><input type="radio" name="export-format" value="png" class="mr-2" checked>画像 (PNG)</label>
+            <label><input type="radio" name="export-format" value="pdf" class="mr-2">PDF</label>
+          </div>
+        </div>
+        <div class="flex justify-end gap-4 pt-4">
+          <button type="button" id="export-cancel-button" class="btn btn-outline px-4 py-2 rounded-md">キャンセル</button>
+          <button type="submit" class="btn bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md">出力</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="loading-overlay" class="modal-overlay">
+    <div class="flex flex-col items-center gap-4">
+      <div class="loader"></div>
+      <p class="text-white font-bold text-lg">図面を生成中です...</p>
+    </div>
+  </div>
+
+  <div id="print-container" style="position: absolute; left: -9999px; top: -9999px; background: white;"></div>
+
+  <template id="help-modal-template">
+    <div class="modal-content">
+      <h3 class="text-xl font-bold mb-4 text-indigo-700">操作方法</h3>
+      <ul class="text-gray-700 space-y-3 mb-6">
+        <li><span class="font-medium text-indigo-600 w-24 inline-block">視点回転:</span> マウス左ドラッグ</li>
+        <li><span class="font-medium text-indigo-600 w-24 inline-block">視点移動:</span> マウス右ドラッグ</li>
+        <li><span class="font-medium text-indigo-600 w-24 inline-block">ズーム:</span> スクロール</li>
+        <li><span class="font-medium text-indigo-600 w-24 inline-block">部品選択:</span> 部品をクリック</li>
+        <li><span class="font-medium text-indigo-600 w-24 inline-block">部品移動:</span> 選択後、矢印をドラッグ</li>
+      </ul>
+      <button id="help-close" class="btn bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md">閉じる</button>
+    </div>
+  </template>
+
+  <template id="usage-guide-modal-template">
+    <div class="full-modal-content" style="max-width: 800px;">
+      <div class="flex justify-between items-center mb-6">
+        <h3 class="text-2xl font-bold text-indigo-700">使い方ガイド (基本的な設計フロー)</h3>
+        <button id="usage-guide-close" class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md">閉じる</button>
+      </div>
+      <div class="space-y-6 text-gray-800">
+        <div>
+          <h4 class="text-xl font-bold text-indigo-600 mb-2">ステップ1：材料となる板を準備する</h4>
+          <ol class="list-decimal list-inside space-y-2 pl-4">
+            <li>画面右側の「**新しい板材を追加**」パネルを開きます。</li>
+            <li>これから作る家具の材料となる大きな板の「厚さ」「幅」「長さ」を入力します。</li>
+            <li>「**新しい板材を追加**」ボタンを押すと、3D空間に板が追加されます。</li>
+          </ol>
+          <p class="text-sm text-gray-600 mt-2 pl-4">* ヒント: 複数の種類の板材を使う場合は、この作業を繰り返してください。</p>
+        </div>
+        <div>
+          <h4 class="text-xl font-bold text-indigo-600 mb-2">ステップ2：材料取り図で部品を切り出す</h4>
+          <ol class="list-decimal list-inside space-y-2 pl-4">
+            <li>画面上部の「**材料取り図**」ボタンを押します。</li>
+            <li>ステップ1で準備した板が2Dの図で表示されます。</li>
+            <li>図上の板をクリックして選択し、「カット方向」と「カット位置」を指定して「**カット適用**」ボタンを押すと、板が2つの部品に分割されます。</li>
+          </ol>
+          <p class="text-sm text-gray-600 mt-2 pl-4">* ヒント: この作業を繰り返し、設計に必要なすべての部品を切り出します。不要な部分は「非表示」ボタンで端材として扱えます。</p>
+        </div>
+        <div>
+          <h4 class="text-xl font-bold text-indigo-600 mb-2">ステップ3：3Dビューで部品を組み立てる</h4>
+          <ol class="list-decimal list-inside space-y-2 pl-4">
+            <li>「材料取り図」モーダルを閉じると、切り出した部品が3D空間に表示されています。</li>
+            <li>部品をクリックで選択し、表示される**矢印や円弧をドラッグ**して、自由に組み立ててください。</li>
+          </ol>
+          <p class="text-sm text-gray-600 mt-2 pl-4">* ヒント: 部品をドラッグすると、近くの部品との距離が自動で表示され、正確な配置ができます。</p>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <template id="wood-diagram-modal-template">
+    <div class="full-modal-content">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-2xl font-bold text-indigo-700">材料取り図</h3>
+        <button id="wood-diagram-close" class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md">閉じる</button>
+      </div>
+      <div id="diagram-warning-message" class="hidden bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
+        <strong class="font-bold">警告:</strong> <span class="block sm:inline">部品と部品の間にきりしろ・けずりしろ(4mm以上)をとってください。</span>
+      </div>
+      <div id="diagram-cut-controls" class="p-4 bg-gray-100 rounded-lg mb-4 hidden absolute z-10">
+        <h4 id="diagram-selected-part-name" class="font-bold mb-2"></h4>
+        <div class="space-y-2 mb-4">
+          <h3 class="font-bold text-gray-700 text-sm">部品名設定</h3>
+          <div class="flex gap-2">
+            <input type="text" id="diagram-part-name-input" list="part-name-presets" class="w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm" placeholder="プリセット選択または自由記述">
+            <button id="diagram-apply-part-name" class="btn bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1 rounded-md text-sm flex-shrink-0">適用</button>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">カット方向</label>
+            <div class="flex gap-2">
+              <button id="diagram-cut-width" class="btn bg-red-100 hover:bg-red-200 px-3 py-1 rounded flex-1 active">長さ</button>
+              <button id="diagram-cut-depth" class="btn bg-blue-100 hover:bg-blue-200 px-3 py-1 rounded flex-1">幅</button>
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">カット基準</label>
+            <div class="flex gap-2">
+              <button data-origin="start" class="btn toggle-btn bg-gray-200 px-3 py-1 rounded flex-1 text-xs active">左/上</button>
+              <button data-origin="end" class="btn toggle-btn bg-gray-200 px-3 py-1 rounded flex-1 text-xs">右/下</button>
+            </div>
+          </div>
+        </div>
+        <div class="mt-2">
+          <label class="block text-sm font-medium text-gray-700 mb-1">カット位置</label>
+          <div class="flex items-center gap-2">
+            <input type="range" id="diagram-cut-slider" min="4" max="500" value="0" class="w-full">
+            <input type="number" id="diagram-cut-input" class="w-20 border border-gray-300 rounded-md p-1 text-sm text-center">
+            <span class="text-sm">mm</span>
+          </div>
+        </div>
+        <div class="mt-4 flex gap-3">
+          <button id="diagram-apply-cut" class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md">カット適用</button>
+          <button id="diagram-hide-part" class="btn bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-md">非表示</button>
+          <button id="diagram-cancel-cut" class="btn bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-md">キャンセル</button>
+        </div>
+      </div>
+      <div id="diagram-merge-controls" class="p-4 bg-white rounded-lg shadow-lg hidden absolute z-20 flex items-center gap-3">
+        <p class="text-sm font-bold text-gray-700">選択中のカット:</p>
+        <button id="diagram-apply-merge" class="btn bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 text-sm rounded-md">部品を統合</button>
+        <button id="diagram-cancel-merge" class="btn bg-gray-500 hover:bg-gray-600 text-white px-3 py-1 text-sm rounded-md">キャンセル</button>
+      </div>
+      <div id="wood-diagrams-container" class="space-y-8"></div>
+    </div>
+  </template>
+
+  <template id="projection-modal-template">
+    <div class="full-modal-content">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-2xl font-bold text-indigo-700">製作図（第三角法）＊隠れ線も実線で表されています。</h3>
+        <button id="projection-close" class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md">閉じる</button>
+      </div>
+      <div id="projection-svg-container" class="w-full h-full border border-gray-300 rounded-md bg-white"></div>
+    </div>
+  </template>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>
